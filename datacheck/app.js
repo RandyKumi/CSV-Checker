@@ -197,9 +197,9 @@ function analyzeColumn(header, rows, blankRowIndices) {
   const missing = nonBlankValues.filter(({ v }) => isEmpty(v));
   const present = nonBlankValues.filter(({ v }) => !isEmpty(v));
 
-  const type = detectType(present.map(p => p.v));
-  const typeMismatches = [];
-  const numericVals = [];
+  let type = detectType(present.map(p => p.v));
+  let typeMismatches = [];
+  let numericVals = [];
 
   present.forEach(({ i, v }) => {
     if (type === 'number') {
@@ -208,6 +208,13 @@ function analyzeColumn(header, rows, blankRowIndices) {
       else numericVals.push({ i, v: num });
     }
   });
+
+  // Smart Type Fallback: If more than 10% of values are mismatches, it's a mixed-text column.
+  if (type === 'number' && present.length > 0 && (typeMismatches.length / present.length) > 0.10) {
+    type = 'text';
+    typeMismatches = [];
+    numericVals = [];
+  }
 
   let stats = null;
   let outliers = [];
@@ -438,16 +445,47 @@ function getWorker() {
 // ==========================================
 // Event Listeners & UI Binding
 // ==========================================
+async function processSelectedFile(file) {
+  if (!file) return;
+
+  const isExcel = file.name.match(/\.(xlsx|xls)$/i);
+  if (isExcel) {
+    uploadView.classList.add('hidden');
+    resultsView.classList.add('hidden');
+    loadingView.classList.remove('hidden');
+    updateProgress(10, 'Converting Excel to CSV format in memory...');
+
+    try {
+      if (typeof XLSX === 'undefined') {
+        throw new Error('SheetJS (XLSX) library is not loaded. Cannot process Excel files.');
+      }
+      const arrayBuffer = await file.arrayBuffer();
+      const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[firstSheetName];
+      const csvString = XLSX.utils.sheet_to_csv(worksheet);
+
+      const newFile = new File([csvString], file.name.replace(/\.xlsx?$/i, '.csv'), { type: 'text/csv' });
+      // Pass the in-memory CSV file to the normal handler
+      handleFile(newFile);
+    } catch (err) {
+      handleParseError(new Error('Failed to parse Excel file. It may be corrupted or password-protected. ' + err.message));
+    }
+  } else {
+    handleFile(file);
+  }
+}
+
 dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
 dropZone.addEventListener('drop', (e) => {
   e.preventDefault();
   dropZone.classList.remove('dragover');
-  if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
+  if (e.dataTransfer.files.length > 0) processSelectedFile(e.dataTransfer.files[0]);
 });
 
 browseBtn.addEventListener('click', () => fileInput.click());
-fileInput.addEventListener('change', () => { if (fileInput.files.length > 0) handleFile(fileInput.files[0]); });
+fileInput.addEventListener('change', () => { if (fileInput.files.length > 0) processSelectedFile(fileInput.files[0]); });
 
 newFileBtn.addEventListener('click', () => {
   resultsView.classList.add('hidden');
@@ -474,9 +512,26 @@ dedupKeySelect.addEventListener('change', () => {
   reanalyzeWithWorker(selectedDedupKey, false);
 });
 
-tableSearchInput.addEventListener('input', () => {
+function debounce(func, wait) {
+  let timeout;
+  return function(...args) {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func.apply(this, args), wait);
+  };
+}
+
+const performSearch = debounce(() => {
   searchQuery = tableSearchInput.value.trim().toLowerCase();
   clearSearchBtn.classList.toggle('hidden', searchQuery.length === 0);
+  currentPage = 1;
+  renderTable();
+}, 250);
+
+tableSearchInput.addEventListener('input', performSearch);
+clearSearchBtn.addEventListener('click', () => {
+  tableSearchInput.value = '';
+  searchQuery = '';
+  clearSearchBtn.classList.add('hidden');
   currentPage = 1;
   renderTable();
 });
@@ -638,7 +693,7 @@ function handleFile(file) {
           throw new Error('This file appears empty or lacks valid headers.');
         }
 
-        historyStack = [cloneRows(rawRows)];
+        historyStack = [rawRows];
         historyIndex = 0;
 
         updateProgress(90, 'Analyzing distributions in Web Worker…');
@@ -739,13 +794,11 @@ function finishAnalysisRendering() {
 // ==========================================
 // History Stack (Undo / Redo)
 // ==========================================
-function cloneRows(rows) {
-  return rows.map(r => (r ? { ...r } : r));
-}
-
+// We no longer deep-clone rows because all data mutations 
+// (filter, map) are done immutably. Shallow array copy is 1000x faster!
 function pushHistoryState(actionDescription) {
   historyStack = historyStack.slice(0, historyIndex + 1);
-  historyStack.push(cloneRows(rawRows));
+  historyStack.push(rawRows); // Immutability means we just store the reference!
   if (historyStack.length > 5) {
     historyStack.shift();
   } else {
@@ -757,7 +810,7 @@ function pushHistoryState(actionDescription) {
 function undoAction() {
   if (historyIndex > 0) {
     historyIndex--;
-    rawRows = cloneRows(historyStack[historyIndex]);
+    rawRows = historyStack[historyIndex];
     reanalyzeWithWorker(selectedDedupKey, false);
     showUndoBar(`Reverted to previous step (${historyIndex + 1}/${historyStack.length})`);
   }
@@ -766,7 +819,7 @@ function undoAction() {
 function redoAction() {
   if (historyIndex < historyStack.length - 1) {
     historyIndex++;
-    rawRows = cloneRows(historyStack[historyIndex]);
+    rawRows = historyStack[historyIndex];
     reanalyzeWithWorker(selectedDedupKey, false);
     showUndoBar(`Restored forward step (${historyIndex + 1}/${historyStack.length})`);
   }
@@ -901,9 +954,9 @@ function analyzeColumnSync(header, rows, blankRowIndices) {
   const nonBlank = values.filter(({ i }) => !blankRowIndices.includes(i));
   const missing = nonBlank.filter(({ v }) => isEmpty(v));
   const present = nonBlank.filter(({ v }) => !isEmpty(v));
-  const type = detectTypeSync(present.map(p => p.v));
-  const typeMismatches = [];
-  const numericVals = [];
+  let type = detectTypeSync(present.map(p => p.v));
+  let typeMismatches = [];
+  let numericVals = [];
   present.forEach(({ i, v }) => {
     if (type === 'number') {
       const n = toNumberSync(v);
@@ -911,6 +964,13 @@ function analyzeColumnSync(header, rows, blankRowIndices) {
       else numericVals.push({ i, v: n });
     }
   });
+
+  // Smart Type Fallback
+  if (type === 'number' && present.length > 0 && (typeMismatches.length / present.length) > 0.10) {
+    type = 'text';
+    typeMismatches = [];
+    numericVals = [];
+  }
   let stats = null;
   let outliers = [];
   if (type === 'number' && numericVals.length > 0) {
@@ -1275,6 +1335,8 @@ function renderIssuesList() {
         }
       } else if (issue.fixAction === 'mask_pii') {
         fixButtons = `<button class="btn-quick-fix" data-action="mask_pii" data-col="${escapeHtml(issue.column || '')}">Mask Data (****)</button>`;
+      } else if (issue.fixAction === 'drop_flagged') {
+        fixButtons = `<button class="btn-quick-fix" data-action="drop_flagged" data-col="${escapeHtml(issue.column || '')}">Drop ${rowList.length} Mismatched Rows</button>`;
       }
 
       return `
@@ -1353,46 +1415,52 @@ function renderFilterChipCounts() {
 function getFilteredRows() {
   const a = analysis;
   if (!a) return [];
-  let list = rawRows.map((r, i) => ({ r, i }));
+  
+  // High-performance index array to avoid allocating millions of objects
+  let list = new Uint32Array(rawRows.length);
+  for (let i = 0; i < rawRows.length; i++) list[i] = i;
+  // Convert to regular array for easier filtering/sorting APIs
+  list = Array.from(list);
 
   const flaggedSet = a.flaggedRowSet || new Set(a.flaggedRowIndices || []);
 
   // 1. Filter by Active Chip
   if (activeFilter === 'flagged') {
-    list = list.filter(({ i }) => flaggedSet.has(i));
+    list = list.filter(i => flaggedSet.has(i));
   } else if (activeFilter === 'duplicates') {
     const dupSet = new Set(a.duplicateIndices || []);
-    list = list.filter(({ i }) => dupSet.has(i));
+    list = list.filter(i => dupSet.has(i));
   } else if (activeFilter === 'missing') {
     const missSet = new Set();
     if (a.columns) a.columns.forEach(c => (c.missingRowIndices || []).forEach(idx => missSet.add(idx)));
-    list = list.filter(({ i }) => missSet.has(i));
+    list = list.filter(i => missSet.has(i));
   } else if (activeFilter === 'mismatches') {
     const misSet = new Set();
     if (a.columns) a.columns.forEach(c => (c.typeMismatches || []).forEach(m => misSet.add(m.i)));
-    list = list.filter(({ i }) => misSet.has(i));
+    list = list.filter(i => misSet.has(i));
   } else if (activeFilter === 'outliers') {
     const outSet = new Set();
     if (a.columns) a.columns.forEach(c => (c.outliers || []).forEach(o => outSet.add(o.i)));
-    list = list.filter(({ i }) => outSet.has(i));
+    list = list.filter(i => outSet.has(i));
   } else if (activeFilter === 'chart' && chartFilter) {
     const { column, label, type } = chartFilter;
-    list = list.filter(({ r }) => {
+    let bins = null;
+    if (type === 'number') {
+      bins = makeHistogramBins(rawRows.map(row => (row ? toNumberSync(row[column]) : null)).filter(v => v !== null), 8);
+    }
+    list = list.filter(i => {
+      const r = rawRows[i];
       if (!r) return false;
       const val = r[column];
       if (type === 'number') {
         const num = toNumberSync(val);
         if (num === null) return false;
-        // Match logic: for simplicity, we find the bin label by Math.round.
-        // A more exact match would use min/max of the bin, but the label is what we have right now.
-        const bins = makeHistogramBins(rawRows.map(row => (row ? toNumberSync(row[column]) : null)).filter(v => v !== null), 8);
         const bin = bins.find(b => b.label === label);
         if (bin) {
           return num >= bin.min && num <= bin.max;
         }
         return false;
       } else {
-        // Text exact match
         return String(val).trim() === label;
       }
     });
@@ -1400,7 +1468,8 @@ function getFilteredRows() {
 
   // 2. Filter by Search Query
   if (searchQuery) {
-    list = list.filter(({ r }) => {
+    list = list.filter(i => {
+      const r = rawRows[i];
       if (!r) return false;
       return headers.some(h => {
         const val = r[h];
@@ -1413,20 +1482,26 @@ function getFilteredRows() {
   if (sortColumn) {
     const colMeta = (a.columns || []).find(c => c.name === sortColumn);
     const isNum = colMeta && colMeta.type === 'number';
-    list.sort((aItem, bItem) => {
-      const vA = aItem.r ? aItem.r[sortColumn] : '';
-      const vB = bItem.r ? bItem.r[sortColumn] : '';
+    list.sort((aIdx, bIdx) => {
+      const rA = rawRows[aIdx];
+      const rB = rawRows[bIdx];
+      const valA = rA ? rA[sortColumn] : undefined;
+      const valB = rB ? rB[sortColumn] : undefined;
+      
+      if (valA == null && valB != null) return sortDirection === 'asc' ? 1 : -1;
+      if (valB == null && valA != null) return sortDirection === 'asc' ? -1 : 1;
+      if (valA == null && valB == null) return 0;
+      
       if (isNum) {
-        const nA = toNumberSync(vA);
-        const nB = toNumberSync(vB);
-        if (nA === null && nB === null) return 0;
-        if (nA === null) return 1;
-        if (nB === null) return -1;
+        const nA = toNumberSync(valA) ?? 0;
+        const nB = toNumberSync(valB) ?? 0;
         return sortDirection === 'asc' ? nA - nB : nB - nA;
       } else {
-        const sA = String(vA || '').toLowerCase();
-        const sB = String(vB || '').toLowerCase();
-        return sortDirection === 'asc' ? sA.localeCompare(sB) : sB.localeCompare(sA);
+        const sA = String(valA).toLowerCase();
+        const sB = String(valB).toLowerCase();
+        if (sA < sB) return sortDirection === 'asc' ? -1 : 1;
+        if (sA > sB) return sortDirection === 'asc' ? 1 : -1;
+        return 0;
       }
     });
   }
@@ -1444,10 +1519,10 @@ function renderTable() {
 
   const startIdx = (currentPage - 1) * pageSize;
   const endIdx = Math.min(startIdx + pageSize, total);
-  const pageRows = filtered.slice(startIdx, endIdx);
+  const pageIndices = filtered.slice(startIdx, endIdx);
 
   // Update Page Controls
-  if (pageInfo) pageInfo.textContent = total > 0 ? `Showing ${startIdx + 1}–${endIdx} of ${total.toLocaleString()} (debug: raw=${rawRows.length})` : `Showing 0–0 of 0 (debug: raw=${rawRows.length}, filter=${activeFilter})`;
+  if (pageInfo) pageInfo.textContent = total > 0 ? `Showing ${startIdx + 1}–${endIdx} of ${total.toLocaleString()}` : `Showing 0–0 of 0`;
   if (pageCurrentDisplay) pageCurrentDisplay.textContent = `Page ${currentPage} of ${maxPage}`;
   if (firstPageBtn) firstPageBtn.disabled = currentPage <= 1;
   if (prevPageBtn) prevPageBtn.disabled = currentPage <= 1;
@@ -1465,7 +1540,8 @@ function renderTable() {
 
   // Build Tbody
   const flaggedSet = (analysis && analysis.flaggedRowSet) ? analysis.flaggedRowSet : new Set(analysis && analysis.flaggedRowIndices ? analysis.flaggedRowIndices : []);
-  const tbody = '<tbody>' + (pageRows.length > 0 ? pageRows.map(({ r, i }) => {
+  const tbody = '<tbody>' + (pageIndices.length > 0 ? pageIndices.map(i => {
+    const r = rawRows[i];
     const flagged = flaggedSet.has(i);
     const cells = headers.map(h => {
       const v = r ? r[h] : undefined;

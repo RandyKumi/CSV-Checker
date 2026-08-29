@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- 1. Content Security Policy (Mitigates XSS & limits CDN Supply Chain impact) -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.sheetjs.com blob:; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:;">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Cdefs%3E%3ClinearGradient id='grad' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%230d9488' /%3E%3Cstop offset='100%25' stop-color='%230f766e' /%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='128' height='128' rx='28' fill='url(%23grad)' /%3E%3Ctext x='64' y='86' font-family='system-ui, sans-serif' font-weight='800' font-size='64' fill='%23ffffff' text-anchor='middle' letter-spacing='-2'%3EDC%3C/text%3E%3C/svg%3E">
 <title>Datacheck — Spreadsheet Health & Cleaning Studio</title>
 <link rel="stylesheet" href="style.css">
   <style>
@@ -69,9 +70,9 @@
     <!-- UPLOAD VIEW -->
     <section id="upload-view" class="view">
       <div class="upload-zone" id="drop-zone">
-        <input type="file" id="file-input" accept=".csv,.tsv,.txt" hidden>
+        <input type="file" id="file-input" accept=".csv,.tsv,.txt,.xlsx,.xls" hidden>
         <div class="upload-icon">↥</div>
-        <h1>Drop a CSV file here</h1>
+        <h1>Drop a CSV or Excel file here</h1>
         <p class="muted">or <button class="link-btn" id="browse-btn" type="button">choose a file</button> from your device</p>
         <p class="fine-print">100% private. Processing runs locally in your browser. No data is sent to any server.</p>
       </div>
@@ -106,7 +107,7 @@
     <!-- LOADING VIEW (SPLASH SCREEN) -->
     <section id="loading-view" class="view hidden">
       <div class="loading-state splash-state">
-        <div class="splash-logo">📊 Datacheck Pro</div>
+        <div class="splash-logo">📊 Datacheck</div>
         <div class="spinner splash-spinner"></div>
         <h2 id="loading-text">Analyzing dataset structure…</h2>
         <div class="progress-bar-wrap splash-progress">
