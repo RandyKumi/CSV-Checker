@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- 1. Content Security Policy (Mitigates XSS & limits CDN Supply Chain impact) -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.sheetjs.com blob:; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:;">
+<title>Datacheck — Spreadsheet Health & Cleaning Studio</title>
+<link rel="stylesheet" href="style.css">
+  <style>
+    /* Splash Screen Enhancements */
+    .splash-state {
+      max-width: 500px;
+      margin: 80px auto;
+      padding: 40px;
+      background: var(--surface);
+      border-radius: 12px;
+      box-shadow: 0 12px 32px rgba(0,0,0,0.1);
+      border: 1px solid var(--border);
+    }
+    .splash-logo {
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--teal);
+      margin-bottom: 30px;
+      letter-spacing: -0.5px;
+    }
+    .splash-spinner {
+      margin-bottom: 20px;
+      width: 40px;
+      height: 40px;
+      border-width: 4px;
+    }
+    .splash-progress {
+      height: 12px;
+      border-radius: 6px;
+      margin-top: 24px;
+      background: var(--bg);
+      border: 1px inset var(--border);
+    }
+    .splash-pct {
+      margin-top: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--teal);
+    }
+  </style>
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <div class="brand">
+        <span class="brand-mark">DC</span>
+        <span class="brand-name">Datacheck </span>
+      </div>
+      <p class="brand-tag">Instant privacy-first CSV health audit, statistical profiling & clean export studio.</p>
+      <div class="topbar-actions">
+        <button id="theme-toggle-btn" class="theme-btn" type="button" title="Toggle Light/Dark Theme" aria-label="Toggle Theme">
+          <span class="theme-icon-light">☀️</span>
+          <span class="theme-icon-dark">🌙</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+
+    <!-- UPLOAD VIEW -->
+    <section id="upload-view" class="view">
+      <div class="upload-zone" id="drop-zone">
+        <input type="file" id="file-input" accept=".csv,.tsv,.txt" hidden>
+        <div class="upload-icon">↥</div>
+        <h1>Drop a CSV file here</h1>
+        <p class="muted">or <button class="link-btn" id="browse-btn" type="button">choose a file</button> from your device</p>
+        <p class="fine-print">100% private. Processing runs locally in your browser. No data is sent to any server.</p>
+      </div>
+
+      <!-- Parsing Options -->
+      <div class="upload-options-wrap">
+        <div class="upload-options">
+          <label>Delimiter:</label>
+          <select id="delimiter-select" class="form-select form-select-sm">
+            <option value="auto">Auto-detect</option>
+            <option value=",">Comma (,)</option>
+            <option value=";">Semicolon (;)</option>
+            <option value="\t">Tab (\t)</option>
+            <option value="|">Pipe (|)</option>
+          </select>
+          <label>Encoding:</label>
+          <select id="encoding-select" class="form-select form-select-sm">
+            <option value="utf-8">UTF-8</option>
+            <option value="iso-8859-1">ISO-8859-1</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="try-sample">
+        <span>Need a test file?</span>
+        <button class="link-btn sample-load-btn" data-sample="employee" type="button">Sample Employee Data</button>
+        <span>·</span>
+        <button class="link-btn sample-load-btn" data-sample="sales" type="button">Sample Sales & Revenue</button>
+      </div>
+    </section>
+
+    <!-- LOADING VIEW (SPLASH SCREEN) -->
+    <section id="loading-view" class="view hidden">
+      <div class="loading-state splash-state">
+        <div class="splash-logo">📊 Datacheck Pro</div>
+        <div class="spinner splash-spinner"></div>
+        <h2 id="loading-text">Analyzing dataset structure…</h2>
+        <div class="progress-bar-wrap splash-progress">
+          <div class="progress-bar-fill" id="progress-bar" style="width: 10%"></div>
+        </div>
+        <div id="progress-pct" class="splash-pct">10%</div>
+      </div>
+    </section>
+
+    <!-- RESULTS VIEW -->
+    <section id="results-view" class="view hidden">
+
+      <div class="results-toolbar">
+        <div class="file-meta">
+          <span class="file-name" id="file-name">dataset.csv</span>
+          <span class="badge" id="file-size-tag">0 MB</span>
+          <span class="badge" id="file-delimiter-tag">Delimiter: ,</span>
+        </div>
+        <div class="toolbar-actions">
+          <button class="btn btn-primary" id="open-clean-modal-btn">Clean & Export Studio</button>
+          <button class="btn btn-ghost" id="open-code-modal-btn">Code & Schema</button>
+          <button class="btn btn-ghost" id="copy-audit-btn" title="Copy report summary to clipboard">📋 Copy Report</button>
+          <button class="btn btn-ghost" id="new-file-btn">Check another file</button>
+        </div>
+      </div>
+
+      <!-- Health Score Radial & Executive Narrative -->
+      <div class="hero-overview-grid">
+        <!-- Radial Gauge Card -->
+        <div class="gauge-card">
+          <div class="gauge-container">
+            <svg class="gauge-svg" viewBox="0 0 120 120">
+              <circle class="gauge-bg-circle" cx="60" cy="60" r="50" />
+              <circle class="gauge-progress-circle" id="gauge-circle" cx="60" cy="60" r="50" />
+            </svg>
+            <div class="gauge-center-text">
+              <span class="gauge-score" id="gauge-score-value">0%</span>
+              <span class="gauge-grade-badge" id="gauge-grade-badge">Grade A</span>
+            </div>
+          </div>
+          <p class="gauge-caption">Overall Quality Rating</p>
+        </div>
+
+        <!-- Executive Narrative Summary -->
+        <div class="executive-summary-card">
+          <div class="exec-header">
+            <span class="exec-title-badge">AI Executive Brief</span>
+            <span class="muted" id="exec-scan-time">Audit completed locally</span>
+          </div>
+          <p class="exec-narrative" id="exec-narrative-text">Analyzing dataset structure and quality indicators…</p>
+        </div>
+      </div>
+
+      <!-- summary cards -->
+      <div class="card-grid" id="summary-cards"></div>
+
+      <!-- Deduplication Key Controls -->
+      <div class="dedup-bar">
+        <div class="dedup-bar-inner">
+          <label for="dedup-key-select" class="dedup-label">
+            <strong>Duplicate Detection Key:</strong>
+          </label>
+          <select id="dedup-key-select" class="form-select dedup-select">
+            <option value="__ALL__">All Columns (Exact Row Match)</option>
+          </select>
+          <span class="muted dedup-hint">Change the unique identifier column to recalculate duplicates instantly.</span>
+        </div>
+      </div>
+
+      <!-- per-column breakdown -->
+      <section class="block">
+        <div class="block-header">
+          <div>
+            <h2>Column Health & Distributions</h2>
+            <p class="muted block-sub">Data types, completeness, and statistical distributions for each column. Click any bar to filter the Data Explorer.</p>
+          </div>
+        </div>
+        <div id="column-grid" class="column-grid"></div>
+      </section>
+
+      <!-- issues with 1-click quick-fixes -->
+      <section class="block">
+        <div class="block-header">
+          <div>
+            <h2>Issues & Anomalies Found</h2>
+            <p class="muted block-sub">Click an item to jump to rows, or click <strong>Quick-Fix</strong> to repair the data in-place.</p>
+          </div>
+          <button class="btn btn-sm btn-ghost" id="fix-all-btn" style="display: none;">Fix All Safe Issues</button>
+        </div>
+        <div id="issues-list" class="issues-list"></div>
+      </section>
+
+      <!-- raw data table with search, filter, and pagination -->
+      <section class="block" id="table-section">
+        <div class="table-header-box">
+          <div class="table-title-row">
+            <h2>Data Explorer</h2>
+            <div class="search-box">
+              <input type="text" id="table-search-input" placeholder="Search across all columns…" class="search-input">
+              <button id="clear-search-btn" class="clear-btn hidden" title="Clear search">✕</button>
+            </div>
+          </div>
+
+          <!-- filter chips -->
+          <div class="filter-chips" id="filter-chips">
+            <button class="chip active" data-filter="all">All Rows (<span id="count-all">0</span>)</button>
+            <button class="chip chip-chart-filter hidden" data-filter="chart" id="chip-chart-filter" style="background: #1DBB94; color: white; border-color: #1DBB94;">Chart Filter ✕</button>
+            <button class="chip chip-flagged" data-filter="flagged">Flagged Rows (<span id="count-flagged">0</span>)</button>
+            <button class="chip" data-filter="duplicates">Duplicates (<span id="count-duplicates">0</span>)</button>
+            <button class="chip" data-filter="missing">Missing Values (<span id="count-missing">0</span>)</button>
+            <button class="chip" data-filter="mismatches">Type Mismatches (<span id="count-mismatches">0</span>)</button>
+            <button class="chip" data-filter="outliers">Outliers (<span id="count-outliers">0</span>)</button>
+          </div>
+        </div>
+
+        <div class="table-scroll">
+          <table id="data-table"></table>
+        </div>
+
+        <!-- pagination toolbar -->
+        <div class="pagination-bar">
+          <div class="page-size-selector">
+            <label for="page-size-select">Rows per page:</label>
+            <select id="page-size-select" class="form-select form-select-sm">
+              <option value="25">25</option>
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+              <option value="250">250</option>
+            </select>
+          </div>
+
+          <div class="page-info" id="page-info">Showing 0–0 of 0</div>
+
+          <div class="page-controls">
+            <button class="btn btn-sm btn-ghost" id="first-page-btn" title="First Page">«</button>
+            <button class="btn btn-sm btn-ghost" id="prev-page-btn" title="Previous Page">‹ Prev</button>
+            <span class="page-current" id="page-current-display">Page 1 of 1</span>
+            <button class="btn btn-sm btn-ghost" id="next-page-btn" title="Next Page">Next ›</button>
+            <button class="btn btn-sm btn-ghost" id="last-page-btn" title="Last Page">»</button>
+          </div>
+        </div>
+      </section>
+
+    </section>
+
+  </main>
+
+  <!-- CLEAN & EXPORT STUDIO MODAL (Native Dialog) -->
+  <dialog id="clean-modal" class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Clean & Export Studio</h3>
+        <button type="button" class="close-modal-btn" id="close-modal-btn" aria-label="Close">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <p class="muted">Select which transformations and filters to apply before exporting your file:</p>
+
+        <div class="clean-section">
+          <h4>Row Filtering</h4>
+          <label class="clean-option">
+            <input type="checkbox" id="clean-drop-blank" checked>
+            <span><strong>Remove fully blank rows</strong> (rows with no data in any column)</span>
+          </label>
+          <label class="clean-option">
+            <input type="checkbox" id="clean-drop-duplicates" checked>
+            <span><strong>Remove duplicate rows</strong> (based on current duplicate detection key)</span>
+          </label>
+          <label class="clean-option">
+            <input type="checkbox" id="clean-drop-flagged">
+            <span><strong>Remove all flagged rows with errors/mismatches</strong></span>
+          </label>
+        </div>
+
+        <div class="clean-section">
+          <h4>Data Cleaning & Imputation</h4>
+          <label class="clean-option">
+            <input type="checkbox" id="clean-trim-text" checked>
+            <span><strong>Trim leading and trailing whitespace</strong> from all text cells</span>
+          </label>
+
+          <div class="clean-subgrid">
+            <div class="clean-field">
+              <label for="clean-fill-text">Fill empty text cells with:</label>
+              <select id="clean-fill-text" class="form-select">
+                <option value="none" selected>Leave Empty</option>
+                <option value="NA">"N/A"</option>
+                <option value="Unknown">"Unknown"</option>
+                <option value="None">"None"</option>
+              </select>
+            </div>
+            <div class="clean-field">
+              <label for="clean-fill-num">Fill empty number cells with:</label>
+              <select id="clean-fill-num" class="form-select">
+                <option value="none" selected>Leave Empty</option>
+                <option value="0">"0"</option>
+                <option value="mean">Column Average (Mean)</option>
+                <option value="median">Column Median</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="clean-field" style="margin-top: 10px;">
+            <label for="clean-text-casing">Standardize Text Casing:</label>
+            <select id="clean-text-casing" class="form-select">
+              <option value="none" selected>Keep Original Casing</option>
+              <option value="title">Title Case (e.g. John Doe, Sales Dept)</option>
+              <option value="lower">lowercase (e.g. john doe, sales dept)</option>
+              <option value="upper">UPPERCASE (e.g. JOHN DOE, SALES DEPT)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="clean-section">
+          <h4>Select Columns to Include in Export</h4>
+          <div class="column-checkboxes" id="column-checkboxes"></div>
+        </div>
+      </div>
+
+        <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" id="cancel-modal-btn">Cancel</button>
+        <button type="button" class="btn btn-ghost" id="export-json-btn">Download Cleaned JSON</button>
+        <button type="button" class="btn btn-ghost" id="export-excel-btn" style="color: #1d6f42; border-color: #1d6f42;">Download Excel (.xlsx)</button>
+        <button type="button" class="btn btn-primary" id="export-csv-btn">Download Cleaned CSV</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- CODE & SCHEMA GENERATOR MODAL -->
+  <dialog id="code-modal" class="modal-dialog code-modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Code & Schema Generator</h3>
+        <button type="button" class="close-modal-btn" id="close-code-modal-btn" aria-label="Close">✕</button>
+      </div>
+
+      <div class="modal-body code-modal-body">
+        <div class="code-tabs">
+          <button class="code-tab active" data-lang="python">Python (Pandas)</button>
+          <button class="code-tab" data-lang="sql">SQL DDL</button>
+          <button class="code-tab" data-lang="typescript">TypeScript</button>
+          <button class="code-tab" data-lang="markdown">Markdown Report</button>
+        </div>
+
+        <div class="code-box-wrapper">
+          <button class="btn btn-sm btn-ghost copy-code-btn" id="copy-code-btn">Copy Code</button>
+          <pre class="code-pre"><code id="code-content" class="code-block"></code></pre>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" id="cancel-code-modal-btn">Close</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- FLOATING UNDO/REDO TOAST BAR -->
+  <div id="undo-bar" class="undo-snackbar hidden">
+    <span id="undo-message">Modification applied.</span>
+    <div class="undo-actions">
+      <button id="undo-btn" class="btn btn-sm btn-primary">Undo (Ctrl+Z)</button>
+      <button id="dismiss-undo-btn" class="close-undo-btn" title="Dismiss">✕</button>
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <p class="muted">Datacheck — 100% Client-Side In-Browser Data Quality Engine. No telemetry, no server uploads.</p>
+    </div>
+  </footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
