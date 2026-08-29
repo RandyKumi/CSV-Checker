@@ -876,13 +876,20 @@ function fixFillMissing(columnName, strategy) {
     fillVal = strategy === 'Unknown' ? 'Unknown' : 'N/A';
   }
 
-  const missingSet = new Set(col.missingRowIndices);
-  rawRows = rawRows.map((r, i) => {
-    if (missingSet.has(i) && r) {
-      return { ...r, [columnName]: fillVal };
+  // Extremely fast array shallow-copy (native V8 speed)
+  const newRows = [...rawRows];
+  
+  // Only loop over the EXACT rows that are missing, avoiding 1,000,000 function calls
+  const indices = col.missingRowIndices;
+  for (let i = 0; i < indices.length; i++) {
+    const idx = indices[i];
+    const r = newRows[idx];
+    if (r) {
+      // Clone only the specific row object being modified to preserve Undo history
+      newRows[idx] = Object.assign({}, r, { [columnName]: fillVal });
     }
-    return r;
-  });
+  }
+  rawRows = newRows;
 
   reanalyzeWithWorker(selectedDedupKey, true, `Filled ${col.missingCount} missing values in "${columnName}" with "${fillVal}".`);
 }
@@ -891,14 +898,21 @@ function fixMaskPII(columnName) {
   const col = analysis.columns.find(c => c.name === columnName);
   if (!col) return;
   
-  rawRows = rawRows.map(r => {
-    if (!r || !r[columnName]) return r;
-    const s = String(r[columnName]).trim();
-    if (s.length < 5) return r;
-    // Mask all but last 4 characters
-    const masked = s.slice(0, -4).replace(/[a-zA-Z0-9]/g, '*') + s.slice(-4);
-    return { ...r, [columnName]: masked };
-  });
+  const newRows = [...rawRows];
+  for (let i = 0; i < newRows.length; i++) {
+    const r = newRows[i];
+    if (r && r[columnName]) {
+      const s = String(r[columnName]).trim();
+      if (s.length >= 5) {
+        const masked = s.slice(0, -4).replace(/[a-zA-Z0-9]/g, '*') + s.slice(-4);
+        // Only clone if modification is actually happening
+        if (masked !== s) {
+          newRows[i] = Object.assign({}, r, { [columnName]: masked });
+        }
+      }
+    }
+  }
+  rawRows = newRows;
 
   reanalyzeWithWorker(selectedDedupKey, true, `Masked sensitive data in "${columnName}".`);
 }
