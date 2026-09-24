@@ -5,6 +5,7 @@
 let rawRows = [];          // Current dataset rows
 let headers = [];          // Column names array
 let analysis = null;       // Computed analysis metrics
+let initialAnalysis = null; // Original metrics for compare
 let currentFileName = '';
 let currentFileSize = '';
 let currentDelimiter = ',';
@@ -65,6 +66,9 @@ const nextPageBtn = document.getElementById('next-page-btn');
 const lastPageBtn = document.getElementById('last-page-btn');
 const dropAllOutliersBtn = document.getElementById('drop-all-outliers-btn');
 const dropAllMissingBtn = document.getElementById('drop-all-missing-btn');
+const dropAllAnomaliesBtn = document.getElementById('drop-all-anomalies-btn');
+const dropAllDuplicatesBtn = document.getElementById('drop-all-duplicates-btn');
+const dropAllMismatchesBtn = document.getElementById('drop-all-mismatches-btn');
 
 // Clean Modal DOM
 const cleanModal = document.getElementById('clean-modal');
@@ -89,6 +93,27 @@ const undoBar = document.getElementById('undo-bar');
 const undoMessage = document.getElementById('undo-message');
 const undoBtn = document.getElementById('undo-btn');
 const dismissUndoBtn = document.getElementById('dismiss-undo-btn');
+
+// Compare Modal DOM
+const compareModal = document.getElementById('compare-modal');
+const openCompareModalBtn = document.getElementById('open-compare-modal-btn');
+const closeCompareModalBtn = document.getElementById('close-compare-modal-btn');
+const closeCompareFooterBtn = document.getElementById('close-compare-footer-btn');
+const compareTableBody = document.getElementById('compare-table-body');
+
+// Visualizer DOM
+const visualizeView = document.getElementById('visualize-view');
+const openVisualizerBtn = document.getElementById('open-visualizer-btn');
+const backToResultsBtn = document.getElementById('back-to-results-btn');
+const exportChartBtn = document.getElementById('export-chart-btn');
+const vizFileName = document.getElementById('viz-file-name');
+const vizType = document.getElementById('viz-type');
+const vizX = document.getElementById('viz-x');
+const vizY = document.getElementById('viz-y');
+const vizAgg = document.getElementById('viz-agg');
+const generateChartBtn = document.getElementById('generate-chart-btn');
+const mainVizCanvas = document.getElementById('main-viz-canvas');
+let mainVizChart = null;
 
 // ==========================================
 // Theme Manager
@@ -188,7 +213,8 @@ function runFullAnalysis(headers, rows, dedupKey) {
     ...blankRowIndices,
     ...columns.flatMap(c => c.missingRowIndices),
     ...columns.flatMap(c => c.typeMismatches.map(m => m.i)),
-    ...columns.flatMap(c => c.outliers.map(o => o.i))
+    ...columns.flatMap(c => c.outliers.map(o => o.i)),
+    ...columns.flatMap(c => (c.formatMismatches || []).map(m => m.i))
   ]));
 
   return {
@@ -687,7 +713,57 @@ if (dropAllOutliersBtn) {
 if (dropAllMissingBtn) {
   dropAllMissingBtn.addEventListener('click', fixDropAllMissing);
 }
+if (dropAllAnomaliesBtn) {
+  dropAllAnomaliesBtn.addEventListener('click', fixDropAllAnomalies);
+}
+if (dropAllDuplicatesBtn) {
+  dropAllDuplicatesBtn.addEventListener('click', fixDropAllDuplicates);
+}
+if (dropAllMismatchesBtn) {
+  dropAllMismatchesBtn.addEventListener('click', fixDropAllMismatches);
+}
 exportJsonBtn.addEventListener('click', () => { executeCleanAndExport('json'); cleanModal.close(); });
+
+if (openCompareModalBtn) {
+  openCompareModalBtn.addEventListener('click', () => {
+    populateCompareModal();
+    if (compareModal) compareModal.showModal();
+  });
+}
+if (closeCompareModalBtn) closeCompareModalBtn.addEventListener('click', () => compareModal.close());
+if (closeCompareFooterBtn) closeCompareFooterBtn.addEventListener('click', () => compareModal.close());
+
+if (openVisualizerBtn) {
+  openVisualizerBtn.addEventListener('click', () => {
+    resultsView.classList.add('hidden');
+    visualizeView.classList.remove('hidden');
+    if (analysis) {
+      if (vizFileName) vizFileName.textContent = currentFileName;
+      populateVizSelects();
+    }
+  });
+}
+if (backToResultsBtn) {
+  backToResultsBtn.addEventListener('click', () => {
+    visualizeView.classList.add('hidden');
+    resultsView.classList.remove('hidden');
+  });
+}
+if (exportChartBtn) {
+  exportChartBtn.addEventListener('click', () => {
+    if (mainVizChart && mainVizCanvas) {
+      const link = document.createElement('a');
+      link.download = `viz-${currentFileName}.png`;
+      link.href = mainVizCanvas.toDataURL('image/png');
+      link.click();
+    } else {
+      alert('Please generate a chart first.');
+    }
+  });
+}
+if (generateChartBtn) {
+  generateChartBtn.addEventListener('click', generateMainVizChart);
+}
 
 openCodeModalBtn.addEventListener('click', () => { updateCodeModalDisplay(); codeModal.showModal(); });
 closeCodeModalBtn.addEventListener('click', () => codeModal.close());
@@ -747,6 +823,7 @@ function handleFile(file) {
   currentPage = 1;
   historyStack = [];
   historyIndex = -1;
+  initialAnalysis = null;
   hideUndoBar();
 
   uploadView.classList.add('hidden');
@@ -907,6 +984,16 @@ function reanalyzeWithWorker(dedupKey, shouldPushHistory = false, historyActionD
 }
 
 function finishAnalysisRendering() {
+  if (!initialAnalysis && analysis) {
+    initialAnalysis = {
+      totalRows: analysis.totalRows,
+      missingTotal: analysis.missingTotal,
+      duplicateCount: analysis.duplicateIndices ? analysis.duplicateIndices.length : 0,
+      typeMismatchTotal: analysis.typeMismatchTotal,
+      outlierTotal: analysis.outlierTotal
+    };
+  }
+
   updateProgress(100, 'Rendering quality suite…');
   loadingView.classList.add('hidden');
   resultsView.classList.remove('hidden');
@@ -1072,6 +1159,70 @@ function fixDropAllOutliers() {
   setTimeout(doPass, 15);
 }
 
+function fixDropAllDuplicates() {
+  if (!analysis || !analysis.duplicateIndices || analysis.duplicateIndices.length === 0) return;
+  const dupSet = new Set(analysis.duplicateIndices);
+  rawRows = rawRows.filter((_, i) => !dupSet.has(i));
+  reanalyzeWithWorker(selectedDedupKey, true, `Dropped ${dupSet.size} duplicate rows.`);
+}
+
+function fixDropAllMismatches() {
+  if (!analysis) return;
+  const mmSet = new Set();
+  analysis.columns.forEach(col => {
+    if (col.typeMismatches && col.typeMismatches.length > 0) {
+      col.typeMismatches.forEach(m => mmSet.add(m.i));
+    }
+    if (col.formatMismatches && col.formatMismatches.length > 0) {
+      col.formatMismatches.forEach(m => mmSet.add(m.i));
+    }
+  });
+  if (mmSet.size === 0) return;
+  rawRows = rawRows.filter((_, i) => !mmSet.has(i));
+  reanalyzeWithWorker(selectedDedupKey, true, `Dropped ${mmSet.size} rows with type or format mismatches.`);
+}
+
+function fixDropAllAnomalies() {
+  if (!analysis) return;
+  const flaggedSet = analysis.flaggedRowSet ? new Set(analysis.flaggedRowSet) : new Set(analysis.flaggedRowIndices || []);
+  if (flaggedSet.size === 0) return;
+  rawRows = rawRows.filter((_, i) => !flaggedSet.has(i));
+  reanalyzeWithWorker(selectedDedupKey, true, `Dropped ${flaggedSet.size} flagged rows (including duplicates, missing, mismatches, and outliers).`);
+}
+
+function populateCompareModal() {
+  if (!initialAnalysis || !analysis || !compareTableBody) return;
+  
+  const currentDupes = analysis.duplicateIndices ? analysis.duplicateIndices.length : 0;
+  
+  const metrics = [
+    { name: 'Total Rows', init: initialAnalysis.totalRows, curr: analysis.totalRows },
+    { name: 'Missing Values', init: initialAnalysis.missingTotal, curr: analysis.missingTotal },
+    { name: 'Duplicate Rows', init: initialAnalysis.duplicateCount, curr: currentDupes },
+    { name: 'Type Mismatches', init: initialAnalysis.typeMismatchTotal, curr: analysis.typeMismatchTotal },
+    { name: 'Statistical Outliers', init: initialAnalysis.outlierTotal, curr: analysis.outlierTotal }
+  ];
+  
+  let html = '';
+  metrics.forEach(m => {
+    const diff = m.curr - m.init;
+    let diffStr = diff === 0 ? '<span style="color:var(--muted)">No change</span>' 
+                : (diff > 0 ? `<span style="color:var(--bad)">+${diff.toLocaleString()}</span>` 
+                            : `<span style="color:var(--good)">${diff.toLocaleString()}</span>`);
+    
+    html += `
+      <tr style="border-bottom: 1px solid var(--border);">
+        <td style="padding: 10px; font-weight: 500;">${m.name}</td>
+        <td style="padding: 10px;">${m.init.toLocaleString()}</td>
+        <td style="padding: 10px; color: var(--accent); font-weight: bold;">${m.curr.toLocaleString()}</td>
+        <td style="padding: 10px;">${diffStr}</td>
+      </tr>
+    `;
+  });
+  
+  compareTableBody.innerHTML = html;
+}
+
 function fixFillMissing(columnName, strategy) {
   const col = analysis.columns.find(c => c.name === columnName);
   if (!col || col.missingCount === 0) return;
@@ -1188,6 +1339,9 @@ function runAnalysisSync(headers, rows, dedupKey) {
     col.missingRowIndices.forEach(i => flaggedSet.add(i));
     col.typeMismatches.forEach(m => flaggedSet.add(m.i));
     col.outliers.forEach(o => flaggedSet.add(o.i));
+    if (col.formatMismatches) {
+      col.formatMismatches.forEach(m => flaggedSet.add(m.i));
+    }
   });
   return { totalRows, totalCols: headers.length, columns, duplicateIndices, blankRowIndices, missingTotal, typeMismatchTotal, outlierTotal, issues, verdict, flaggedRowSet: flaggedSet };
 }
@@ -2222,4 +2376,141 @@ function generateSalesSampleCsv() {
   for (let i = 0; i < 4; i++) rows.push(['', '', '', '', '', '', '', '', '']);
 
   return rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+}
+
+function generateMainVizChart() {
+  if (!analysis) return;
+  const oldText = generateChartBtn.textContent;
+  generateChartBtn.textContent = 'Processing...';
+  generateChartBtn.disabled = true;
+  
+  setTimeout(() => {
+    try {
+      buildAndRenderChart();
+    } catch(err) {
+      alert('Failed to generate chart: ' + err.message);
+    }
+    generateChartBtn.textContent = oldText;
+    generateChartBtn.disabled = false;
+  }, 50);
+}
+
+function populateVizSelects() {
+  vizX.innerHTML = '';
+  vizY.innerHTML = '<option value="">(None - Count rows only)</option>';
+  
+  analysis.columns.forEach(c => {
+    const optX = document.createElement('option');
+    optX.value = c.name;
+    optX.textContent = c.name;
+    vizX.appendChild(optX);
+    
+    if (c.type === 'number') {
+      const optY = document.createElement('option');
+      optY.value = c.name;
+      optY.textContent = c.name;
+      vizY.appendChild(optY);
+    }
+  });
+}
+
+function buildAndRenderChart() {
+  const type = vizType.value;
+  const xCol = vizX.value;
+  const yCol = vizY.value;
+  const agg = vizAgg.value;
+  
+  const groups = new Map();
+  rawRows.forEach(row => {
+    const xVal = row[xCol];
+    let key = (xVal === undefined || xVal === null) ? 'Missing' : String(xVal).trim();
+    if (key === '') key = 'Empty';
+    
+    if (!groups.has(key)) {
+      groups.set(key, { count: 0, sum: 0, values: [] });
+    }
+    
+    const g = groups.get(key);
+    g.count++;
+    
+    if (yCol) {
+      const yVal = toNumber(row[yCol]);
+      if (yVal !== null) {
+        g.sum += yVal;
+        g.values.push(yVal);
+      }
+    }
+  });
+  
+  let sortedKeys = [...groups.keys()];
+  if (type === 'bar' || type === 'pie' || type === 'doughnut') {
+    sortedKeys.sort((a, b) => groups.get(b).count - groups.get(a).count);
+    if (sortedKeys.length > 50) sortedKeys = sortedKeys.slice(0, 50);
+  } else if (type === 'line') {
+    sortedKeys.sort((a, b) => {
+      const numA = Number(a), numB = Number(b);
+      if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+      return a.localeCompare(b);
+    });
+  }
+  
+  const labels = [];
+  const dataPoints = [];
+  
+  if (type === 'scatter' && yCol) {
+    let plotted = 0;
+    for (let row of rawRows) {
+      if (plotted > 2000) break;
+      const xV = toNumber(row[xCol]);
+      const yV = toNumber(row[yCol]);
+      if (xV !== null && yV !== null) {
+        dataPoints.push({ x: xV, y: yV });
+        plotted++;
+      }
+    }
+  } else {
+    sortedKeys.forEach(k => {
+      labels.push(k);
+      const g = groups.get(k);
+      if (yCol) {
+        if (agg === 'sum') dataPoints.push(g.sum);
+        else if (agg === 'avg') dataPoints.push(g.values.length > 0 ? (g.sum / g.values.length) : 0);
+        else dataPoints.push(g.count);
+      } else {
+        dataPoints.push(g.count);
+      }
+    });
+  }
+  
+  if (mainVizChart) mainVizChart.destroy();
+  const ctx = mainVizCanvas.getContext('2d');
+  
+  const chartConfig = {
+    type: type === 'scatter' ? 'scatter' : type,
+    data: {
+      labels: type !== 'scatter' ? labels : undefined,
+      datasets: [{
+        label: yCol ? `${agg.toUpperCase()} of ${yCol} by ${xCol}` : `Count of ${xCol}`,
+        data: dataPoints,
+        backgroundColor: '#6b66fa',
+        borderColor: '#6b66fa',
+        borderWidth: 1
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: type === 'pie' || type === 'doughnut' }
+      }
+    }
+  };
+  
+  if (type === 'pie' || type === 'doughnut') {
+    chartConfig.data.datasets[0].backgroundColor = [
+      '#6b66fa', '#1DBB94', '#FF5B5B', '#FFAA00', '#2E93FA', '#66DA26', '#546E7A', '#E91E63', '#9C27B0'
+    ];
+  }
+  
+  mainVizChart = new Chart(ctx, chartConfig);
 }

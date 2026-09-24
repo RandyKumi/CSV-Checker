@@ -128,6 +128,8 @@
         </div>
         <div class="toolbar-actions">
           <button class="btn btn-primary" id="open-clean-modal-btn">Clean & Export Studio</button>
+          <button class="btn btn-ghost" id="open-compare-modal-btn" style="border: 1px solid var(--accent); color: var(--accent);">Before & After Compare</button>
+          <button class="btn btn-ghost" id="open-visualizer-btn" style="border: 1px solid var(--amber); color: var(--amber);">Visual Explorer 📈</button>
           <button class="btn btn-ghost" id="open-code-modal-btn">Code & Schema</button>
           <button class="btn btn-ghost" id="copy-audit-btn" title="Copy report summary to clipboard">📋 Copy Report</button>
           <button class="btn btn-ghost" id="new-file-btn">Check another file</button>
@@ -195,8 +197,11 @@
             <h2>Issues & Anomalies Found</h2>
             <p class="muted block-sub">Click an item to jump to rows, or click <strong>Quick-Fix</strong> to repair the data in-place.</p>
           </div>
-          <div style="display: flex; gap: 8px;">
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button class="btn btn-sm btn-ghost" id="drop-all-anomalies-btn" style="color: var(--amber); border-color: var(--amber);">Drop All Flagged Rows</button>
+            <button class="btn btn-sm btn-ghost" id="drop-all-duplicates-btn" style="color: var(--amber); border-color: var(--amber);">Drop All Duplicates</button>
             <button class="btn btn-sm btn-ghost" id="drop-all-missing-btn" style="color: var(--amber); border-color: var(--amber);">Drop All Missing Values</button>
+            <button class="btn btn-sm btn-ghost" id="drop-all-mismatches-btn" style="color: var(--amber); border-color: var(--amber);">Drop All Type Mismatches</button>
             <button class="btn btn-sm btn-ghost" id="drop-all-outliers-btn" style="color: var(--amber); border-color: var(--amber);">Drop All Outliers</button>
             <button class="btn btn-sm btn-ghost" id="fix-all-btn" style="display: none;">Fix All Safe Issues</button>
           </div>
@@ -258,6 +263,56 @@
         </div>
       </section>
 
+    </section>
+
+    <!-- VISUALIZER VIEW -->
+    <section id="visualize-view" class="view hidden">
+      <div class="results-toolbar">
+        <div class="file-meta">
+          <span class="file-name" id="viz-file-name">dataset.csv</span>
+          <span class="badge" style="background: var(--accent); color: white;">Visual Explorer</span>
+        </div>
+        <div class="toolbar-actions">
+          <button class="btn btn-ghost" id="back-to-results-btn">Back to Data Cleaner</button>
+          <button class="btn btn-primary" id="export-chart-btn">Download Chart (PNG)</button>
+        </div>
+      </div>
+      
+      <div class="block" style="display: flex; gap: 20px; align-items: stretch; min-height: 500px;">
+        <div style="flex: 0 0 300px; padding-right: 20px; border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: 15px;">
+          <h3>Chart Settings</h3>
+          <div>
+            <label>Chart Type</label>
+            <select id="viz-type" class="form-select">
+              <option value="bar">Bar Chart</option>
+              <option value="scatter">Scatter Plot</option>
+              <option value="line">Line Chart</option>
+              <option value="pie">Pie Chart</option>
+            </select>
+          </div>
+          <div>
+            <label>X-Axis Column</label>
+            <select id="viz-x" class="form-select"></select>
+          </div>
+          <div>
+            <label>Y-Axis Column (Value)</label>
+            <select id="viz-y" class="form-select"></select>
+          </div>
+          <div>
+            <label>Aggregation</label>
+            <select id="viz-agg" class="form-select">
+              <option value="sum">Sum</option>
+              <option value="avg">Average</option>
+              <option value="count">Count</option>
+            </select>
+          </div>
+          <button id="generate-chart-btn" class="btn btn-primary" style="margin-top: auto;">Generate Chart</button>
+        </div>
+        
+        <div style="flex: 1; position: relative; min-height: 400px; display: flex; align-items: center; justify-content: center;">
+          <canvas id="main-viz-canvas" style="max-height: 500px; width: 100%;"></canvas>
+        </div>
+      </div>
     </section>
 
   </main>
@@ -385,6 +440,35 @@
       <p class="muted">Datacheck — 100% Client-Side In-Browser Data Quality Engine. No telemetry, no server uploads.</p>
     </div>
   </footer>
+
+  <!-- COMPARE MODAL -->
+  <dialog id="compare-modal" class="modal-dialog">
+    <div class="modal-content" style="max-width: 600px;">
+      <div class="modal-header">
+        <h3>Data Audit: Before & After</h3>
+        <button type="button" class="close-modal-btn" id="close-compare-modal-btn" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted">Review how your dataset's health and metrics have changed since initial upload.</p>
+        <table style="width: 100%; text-align: left; border-collapse: collapse; margin-top: 1rem;">
+          <thead>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <th style="padding: 10px;">Metric</th>
+              <th style="padding: 10px;">Original</th>
+              <th style="padding: 10px; color: var(--accent);">Current</th>
+              <th style="padding: 10px;">Change</th>
+            </tr>
+          </thead>
+          <tbody id="compare-table-body">
+            <!-- Populated via JS -->
+          </tbody>
+        </table>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" id="close-compare-footer-btn">Done</button>
+      </div>
+    </div>
+  </dialog>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
