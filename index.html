@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- 1. Content Security Policy (Mitigates XSS & limits CDN Supply Chain impact) -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.sheetjs.com blob:; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.sheetjs.com blob:; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:;">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Cdefs%3E%3ClinearGradient id='grad' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%230d9488' /%3E%3Cstop offset='100%25' stop-color='%230f766e' /%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='128' height='128' rx='28' fill='url(%23grad)' /%3E%3Ctext x='64' y='86' font-family='system-ui, sans-serif' font-weight='800' font-size='64' fill='%23ffffff' text-anchor='middle' letter-spacing='-2'%3EDC%3C/text%3E%3C/svg%3E">
 <title>Datacheck — Spreadsheet Health & Cleaning Studio</title>
 <link rel="stylesheet" href="style.css">
@@ -69,7 +69,7 @@
 
     <!-- UPLOAD VIEW -->
     <section id="upload-view" class="view">
-      <div class="upload-zone" id="drop-zone">
+      <div class="upload-zone" id="drop-zone" style="cursor: pointer;">
         <input type="file" id="file-input" accept=".csv,.tsv,.txt,.xlsx,.xls" hidden>
         <div class="upload-icon">↥</div>
         <h1>Drop a CSV or Excel file here</h1>
@@ -137,7 +137,7 @@
       <!-- Health Score Radial & Executive Narrative -->
       <div class="hero-overview-grid">
         <!-- Radial Gauge Card -->
-        <div class="gauge-card">
+        <div class="gauge-card" title="Score penalizes missing values, duplicates, and type mismatches. Statistical outliers do not affect this score since they may be valid data points.">
           <div class="gauge-container">
             <svg class="gauge-svg" viewBox="0 0 120 120">
               <circle class="gauge-bg-circle" cx="60" cy="60" r="50" />
@@ -195,7 +195,11 @@
             <h2>Issues & Anomalies Found</h2>
             <p class="muted block-sub">Click an item to jump to rows, or click <strong>Quick-Fix</strong> to repair the data in-place.</p>
           </div>
-          <button class="btn btn-sm btn-ghost" id="fix-all-btn" style="display: none;">Fix All Safe Issues</button>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn btn-sm btn-ghost" id="drop-all-missing-btn" style="color: var(--amber); border-color: var(--amber);">Drop All Missing Values</button>
+            <button class="btn btn-sm btn-ghost" id="drop-all-outliers-btn" style="color: var(--amber); border-color: var(--amber);">Drop All Outliers</button>
+            <button class="btn btn-sm btn-ghost" id="fix-all-btn" style="display: none;">Fix All Safe Issues</button>
+          </div>
         </div>
         <div id="issues-list" class="issues-list"></div>
       </section>
@@ -248,6 +252,9 @@
             <button class="btn btn-sm btn-ghost" id="next-page-btn" title="Next Page">Next ›</button>
             <button class="btn btn-sm btn-ghost" id="last-page-btn" title="Last Page">»</button>
           </div>
+        </div>
+        <div class="table-footer-note muted" style="font-size: 13px; margin-top: 15px; text-align: center; border-top: 1px solid var(--border); padding-top: 15px;">
+          <em><strong>Note on Scoring:</strong> The Overall Quality Rating only penalizes structural errors like missing cells, duplicates, and type mismatches. Statistical outliers are flagged for review but do not reduce the score, as they are often valid data points in real-world datasets.</em>
         </div>
       </section>
 

@@ -63,6 +63,8 @@ const firstPageBtn = document.getElementById('first-page-btn');
 const prevPageBtn = document.getElementById('prev-page-btn');
 const nextPageBtn = document.getElementById('next-page-btn');
 const lastPageBtn = document.getElementById('last-page-btn');
+const dropAllOutliersBtn = document.getElementById('drop-all-outliers-btn');
+const dropAllMissingBtn = document.getElementById('drop-all-missing-btn');
 
 // Clean Modal DOM
 const cleanModal = document.getElementById('clean-modal');
@@ -115,9 +117,22 @@ initTheme();
 // Inline Web Worker Code (Blob URL)
 // ==========================================
 const workerCode = `
+let accumulatedChunks = [];
 self.onmessage = function(e) {
-  const { type, headers, rows, dedupKey } = e.data;
-  if (type === 'ANALYZE') {
+  const data = e.data;
+  if (data.type === 'CHUNK') {
+    accumulatedChunks = accumulatedChunks.concat(data.chunk);
+  } else if (data.type === 'ANALYZE_CHUNKS') {
+    try {
+      const result = runFullAnalysis(data.headers, accumulatedChunks, data.dedupKey);
+      self.postMessage({ type: 'ANALYSIS_SUCCESS', analysis: result });
+      accumulatedChunks = []; // Clear memory
+    } catch (err) {
+      self.postMessage({ type: 'ANALYSIS_ERROR', error: err.message });
+      accumulatedChunks = [];
+    }
+  } else if (data.type === 'ANALYZE') {
+    const { headers, rows, dedupKey } = data;
     try {
       const result = runFullAnalysis(headers, rows, dedupKey);
       self.postMessage({ type: 'ANALYSIS_SUCCESS', analysis: result });
@@ -228,6 +243,34 @@ function analyzeColumn(header, rows, blankRowIndices) {
     topValues = computeTopValues(present.map(p => p.v));
   }
 
+  // Semantic Format Detection (Email, URL)
+  let formatMismatches = [];
+  let formatType = null;
+  if (type === 'text' && present.length > 0) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const urlRegex = /^https?:\/\/[^\s/$.?#].[^\s]*$/i;
+    let emailCount = 0;
+    let urlCount = 0;
+    
+    present.forEach(p => {
+      const s = String(p.v).trim();
+      if (emailRegex.test(s)) emailCount++;
+      if (urlRegex.test(s)) urlCount++;
+    });
+    
+    if (emailCount > present.length * 0.2) {
+      formatType = 'email';
+      present.forEach(p => {
+        if (!emailRegex.test(String(p.v).trim())) formatMismatches.push({ i: p.i, v: p.v });
+      });
+    } else if (urlCount > present.length * 0.2) {
+      formatType = 'url';
+      present.forEach(p => {
+        if (!urlRegex.test(String(p.v).trim())) formatMismatches.push({ i: p.i, v: p.v });
+      });
+    }
+  }
+
   // PII Detection (Basic Heuristics)
   let piiFlag = null;
   if (type === 'text' && present.length > 0) {
@@ -259,7 +302,9 @@ function analyzeColumn(header, rows, blankRowIndices) {
     outliers,
     typeMismatches,
     topValues,
-    piiFlag
+    piiFlag,
+    formatType,
+    formatMismatches
   };
 }
 
@@ -398,12 +443,36 @@ function buildIssuesList({ columns, duplicateIndices, blankRowIndices, totalRows
         fixAction: 'remove_outliers'
       });
     }
+    if (col.piiFlag) {
+      issues.push({
+        type: 'security',
+        severity: 'bad',
+        title: \`"\${col.name}" contains sensitive PII\`,
+        detail: \`Detected \${col.piiFlag === 'credit_card' ? 'Credit Card numbers' : 'Social Security Numbers'}.\`,
+        column: col.name,
+        rowIndices: [],
+        canFix: true,
+        fixAction: 'mask_pii'
+      });
+    }
+    if (col.formatMismatches && col.formatMismatches.length > 0) {
+      issues.push({
+        type: 'format_mismatch',
+        severity: 'bad',
+        title: \`"\${col.name}" has \${col.formatMismatches.length} invalid \${col.formatType} formats\`,
+        detail: \`Expected valid \${col.formatType} formatting, but found unexpected text patterns.\`,
+        column: col.name,
+        rowIndices: col.formatMismatches.map(m => m.i),
+        canFix: true,
+        fixAction: 'clear_invalid_formats'
+      });
+    }
   });
   return issues;
 }
 
 function buildVerdict({ totalRows, totalCells, duplicateCount, blankCount, missingTotal, typeMismatchTotal }) {
-  if (totalCells === 0) return { score: 100, headline: 'Empty File', sub: 'No records found.', grade: 'A+' };
+  if (totalRows === 0) return { score: 0, headline: 'Empty Dataset', sub: 'All records have been removed.', grade: 'N/A' };
   const penalty = (duplicateCount * 2.5) + (blankCount * 2) + (missingTotal * 0.4) + (typeMismatchTotal * 3);
   const score = Math.max(0, Math.min(100, Math.round(100 - (penalty / Math.max(1, totalCells)) * 100)));
   
@@ -448,34 +517,73 @@ function getWorker() {
 async function processSelectedFile(file) {
   if (!file) return;
 
+  const MAX_SIZE_MB = 500;
+  if (file.size > MAX_SIZE_MB * 1024 * 1024) {
+    alert(`File is too large (${formatFileSize(file.size)}). Maximum allowed size is ${MAX_SIZE_MB}MB to prevent browser memory exhaustion.`);
+    return;
+  }
+
   const isExcel = file.name.match(/\.(xlsx|xls)$/i);
   if (isExcel) {
     uploadView.classList.add('hidden');
     resultsView.classList.add('hidden');
     loadingView.classList.remove('hidden');
-    updateProgress(10, 'Converting Excel to CSV format in memory...');
+    updateProgress(10, 'Extracting Excel data in background worker... this may take a moment.');
 
     try {
-      if (typeof XLSX === 'undefined') {
-        throw new Error('SheetJS (XLSX) library is not loaded. Cannot process Excel files.');
-      }
       const arrayBuffer = await file.arrayBuffer();
-      const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-      const firstSheetName = workbook.SheetNames[0];
-      const worksheet = workbook.Sheets[firstSheetName];
-      const csvString = XLSX.utils.sheet_to_csv(worksheet);
 
-      const newFile = new File([csvString], file.name.replace(/\.xlsx?$/i, '.csv'), { type: 'text/csv' });
-      // Pass the in-memory CSV file to the normal handler
-      handleFile(newFile);
+      let excelWorker = null;
+      let hangTimer = setTimeout(() => {
+        const proceed = confirm(`This heavy file is taking a while to process. Do you want to wait 30 more seconds, or exit? \n\nClick OK to Wait, or Cancel to exit to the landing page.`);
+        if (!proceed) {
+          if (excelWorker) excelWorker.terminate();
+          window.location.reload();
+        }
+      }, 15000);
+
+      const workerBlob = new Blob([`
+        importScripts('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
+        self.onmessage = function(e) {
+          try {
+            const workbook = XLSX.read(e.data.arrayBuffer, { type: 'array' });
+            const firstSheetName = workbook.SheetNames[0];
+            const worksheet = workbook.Sheets[firstSheetName];
+            const csvString = XLSX.utils.sheet_to_csv(worksheet);
+            self.postMessage({ success: true, csvString });
+          } catch (err) {
+            self.postMessage({ success: false, error: err.message });
+          }
+        };
+      `], { type: 'application/javascript' });
+
+      excelWorker = new Worker(URL.createObjectURL(workerBlob));
+      excelWorker.onmessage = function(e) {
+        clearTimeout(hangTimer);
+        if (e.data.success) {
+          const newFile = new File([e.data.csvString], file.name.replace(/\.xlsx?$/i, '.csv'), { type: 'text/csv' });
+          handleFile(newFile);
+        } else {
+          handleParseError(new Error('Failed to parse Excel file. ' + e.data.error));
+        }
+        excelWorker.terminate();
+      };
+      
+      excelWorker.postMessage({ arrayBuffer }, [arrayBuffer]);
+
     } catch (err) {
-      handleParseError(new Error('Failed to parse Excel file. It may be corrupted or password-protected. ' + err.message));
+      handleParseError(new Error('Failed to process Excel file. ' + err.message));
     }
   } else {
     handleFile(file);
   }
 }
 
+dropZone.addEventListener('click', (e) => {
+  if (e.target.tagName !== 'BUTTON' && e.target.tagName !== 'A') {
+    fileInput.click();
+  }
+});
 dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
 dropZone.addEventListener('drop', (e) => {
@@ -572,6 +680,13 @@ openCleanModalBtn.addEventListener('click', () => { populateColumnCheckboxes(); 
 closeModalBtn.addEventListener('click', () => cleanModal.close());
 cancelModalBtn.addEventListener('click', () => cleanModal.close());
 exportCsvBtn.addEventListener('click', () => { executeCleanAndExport('csv'); cleanModal.close(); });
+
+if (dropAllOutliersBtn) {
+  dropAllOutliersBtn.addEventListener('click', fixDropAllOutliers);
+}
+if (dropAllMissingBtn) {
+  dropAllMissingBtn.addEventListener('click', fixDropAllMissing);
+}
 exportJsonBtn.addEventListener('click', () => { executeCleanAndExport('json'); cleanModal.close(); });
 
 openCodeModalBtn.addEventListener('click', () => { updateCodeModalDisplay(); codeModal.showModal(); });
@@ -728,7 +843,7 @@ function handleParseError(err) {
     errBox.style.cssText = 'margin-top: 20px; padding: 16px; background: var(--coral-bg); color: var(--coral); border-radius: 8px; border: 1px solid var(--coral);';
     dropZone.parentNode.insertBefore(errBox, dropZone.nextSibling);
   }
-  errBox.innerHTML = `<strong>Error parsing file:</strong> ${msg}`;
+  errBox.innerHTML = `<strong>Error parsing file:</strong> ${escapeHtml(msg)}`;
 }
 
 // Background Analysis Request
@@ -756,7 +871,28 @@ function reanalyzeWithWorker(dedupKey, shouldPushHistory = false, historyActionD
       finishAnalysisRendering();
     };
     try {
-      w.postMessage({ type: 'ANALYZE', headers, rows: rawRows, dedupKey });
+      if (rawRows.length > 2000) {
+        let chunkSize = Math.max(500, Math.floor(100000 / (headers.length || 1)));
+        let i = 0;
+        const total = rawRows.length;
+        
+        function sendChunk() {
+          const chunk = rawRows.slice(i, i + chunkSize);
+          w.postMessage({ type: 'CHUNK', chunk });
+          i += chunkSize;
+          
+          if (i < total) {
+            updateProgress(90, `Transferring data to background worker... (${Math.min(100, Math.floor((i / total) * 100))}%) `);
+            setTimeout(sendChunk, 15);
+          } else {
+            updateProgress(90, 'Analyzing distributions in Web Worker…');
+            w.postMessage({ type: 'ANALYZE_CHUNKS', headers, dedupKey });
+          }
+        }
+        setTimeout(sendChunk, 15);
+      } else {
+        w.postMessage({ type: 'ANALYZE', headers, rows: rawRows, dedupKey });
+      }
     } catch (postErr) {
       console.warn('Failed to postMessage to worker, falling back to sync:', postErr);
       analysis = runAnalysisSync(headers, rawRows, dedupKey);
@@ -783,7 +919,7 @@ function finishAnalysisRendering() {
     const tableSection = document.getElementById('table-section');
     if (tableSection) {
       tableSection.innerHTML = `<div class="alert alert-danger" style="margin:20px; padding:20px; background:var(--coral-bg); color:var(--coral);">
-        <strong>UI Render Crash:</strong> ${err.message}<br><pre>${err.stack}</pre>
+        <strong>UI Render Crash:</strong> ${escapeHtml(err.message)}<br><pre>${escapeHtml(err.stack)}</pre>
         <br>rawRows length: ${rawRows ? rawRows.length : 'null'}
         <br>headers length: ${headers ? headers.length : 'null'}
       </div>` + tableSection.innerHTML;
@@ -825,10 +961,16 @@ function redoAction() {
   }
 }
 
+let undoTimeout = null;
 function showUndoBar(message) {
   if (undoBar && undoMessage) {
     undoMessage.textContent = message || 'Dataset modified in-memory.';
     undoBar.classList.remove('hidden');
+    
+    if (undoTimeout) clearTimeout(undoTimeout);
+    undoTimeout = setTimeout(() => {
+      hideUndoBar();
+    }, 10000);
   }
 }
 
@@ -861,6 +1003,73 @@ function fixRemoveOutliers(columnName) {
   const outSet = new Set(col.outliers.map(o => o.i));
   rawRows = rawRows.filter((_, i) => !outSet.has(i));
   reanalyzeWithWorker(selectedDedupKey, true, `Removed ${col.outliers.length} outliers from "${columnName}".`);
+}
+
+function fixDropAllMissing() {
+  if (!analysis) return;
+  const missingSet = new Set();
+  analysis.columns.forEach(col => {
+    if (col.missingRowIndices && col.missingRowIndices.length > 0) {
+      col.missingRowIndices.forEach(i => missingSet.add(i));
+    }
+  });
+  if (missingSet.size === 0) return;
+  
+  rawRows = rawRows.filter((_, i) => !missingSet.has(i));
+  reanalyzeWithWorker(selectedDedupKey, true, `Dropped ${missingSet.size} rows containing missing values.`);
+}
+
+function fixDropAllOutliers() {
+  if (!analysis) return;
+  
+  if (resultsView) resultsView.classList.add('hidden');
+  if (loadingView) loadingView.classList.remove('hidden');
+  updateProgress(0, 'Recursively dropping outliers... this may take a moment.');
+  
+  let currentAnalysis = analysis;
+  let loopCount = 0;
+  let totalDropped = 0;
+  const startTime = Date.now();
+  
+  function doPass() {
+    loopCount++;
+    const outSet = new Set();
+    currentAnalysis.columns.forEach(col => {
+      if (col.outliers && col.outliers.length > 0) {
+        col.outliers.forEach(o => outSet.add(o.i));
+      }
+    });
+    
+    if (outSet.size === 0 || loopCount > 50) {
+      if (totalDropped > 0) {
+        analysis = currentAnalysis;
+        analysis.flaggedRowSet = new Set(analysis.flaggedRowIndices || []);
+        pushHistoryState(`Recursively removed ${totalDropped} outliers across all columns over ${loopCount - 1} passes.`);
+        finishAnalysisRendering();
+      } else {
+        if (loadingView) loadingView.classList.add('hidden');
+        if (resultsView) resultsView.classList.remove('hidden');
+      }
+      return; // Done
+    }
+    
+    totalDropped += outSet.size;
+    rawRows = rawRows.filter((_, i) => !outSet.has(i));
+    currentAnalysis = runAnalysisSync(headers, rawRows, selectedDedupKey);
+    
+    // Fake progress based on time, aiming for 95% at ~10 seconds
+    const elapsedSecs = (Date.now() - startTime) / 1000;
+    let pct = Math.floor((elapsedSecs / 10) * 95);
+    // Ensure it goes up slightly with each pass if it's very fast
+    pct = Math.max(pct, loopCount * 5); 
+    pct = Math.min(99, pct);
+    
+    updateProgress(pct, `Recursively dropping outliers (Pass ${loopCount})...`);
+    
+    setTimeout(doPass, 15);
+  }
+  
+  setTimeout(doPass, 15);
 }
 
 function fixFillMissing(columnName, strategy) {
@@ -916,6 +1125,26 @@ function fixMaskPII(columnName) {
 
   reanalyzeWithWorker(selectedDedupKey, true, `Masked sensitive data in "${columnName}".`);
 }
+
+function fixClearInvalidFormats(columnName) {
+  const col = analysis.columns.find(c => c.name === columnName);
+  if (!col || !col.formatMismatches || col.formatMismatches.length === 0) return;
+  
+  const mismatchSet = new Set(col.formatMismatches.map(m => m.i));
+  const newRows = [...rawRows];
+  for (let i = 0; i < newRows.length; i++) {
+    if (mismatchSet.has(i)) {
+      const r = newRows[i];
+      if (r) {
+        newRows[i] = Object.assign({}, r, { [columnName]: '' });
+      }
+    }
+  }
+  rawRows = newRows;
+  
+  reanalyzeWithWorker(selectedDedupKey, true, `Cleared ${mismatchSet.size} invalid formats in "${columnName}".`);
+}
+
 
 function fixRemoveFlaggedRows() {
   const count = analysis.flaggedRowSet.size;
@@ -993,6 +1222,33 @@ function analyzeColumnSync(header, rows, blankRowIndices) {
   }
   let topValues = (type === 'text' || type === 'date') ? computeTopValuesSync(present.map(p => p.v)) : null;
   
+  // Semantic Format Detection (Email, URL)
+  let formatMismatches = [];
+  let formatType = null;
+  if (type === 'text' && present.length > 0) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const urlRegex = /^https?:\/\/[^\s/$.?#].[^\s]*$/i;
+    let emailCount = 0;
+    let urlCount = 0;
+    
+    present.forEach(p => {
+      const s = String(p.v).trim();
+      if (emailRegex.test(s)) emailCount++;
+      if (urlRegex.test(s)) urlCount++;
+    });
+    
+    if (emailCount > present.length * 0.2) {
+      formatType = 'email';
+      present.forEach(p => {
+        if (!emailRegex.test(String(p.v).trim())) formatMismatches.push({ i: p.i, v: p.v });
+      });
+    } else if (urlCount > present.length * 0.2) {
+      formatType = 'url';
+      present.forEach(p => {
+        if (!urlRegex.test(String(p.v).trim())) formatMismatches.push({ i: p.i, v: p.v });
+      });
+    }
+  }
   let piiFlag = null;
   if (type === 'text' && present.length > 0) {
     const ccRegex = /^(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})$/;
@@ -1014,7 +1270,7 @@ function analyzeColumnSync(header, rows, blankRowIndices) {
     name: header, type, total: nonBlank.length,
     missingCount: missing.length, missingRowIndices: missing.map(m => m.i),
     fillPct: nonBlank.length === 0 ? 0 : Math.round((present.length / nonBlank.length) * 100),
-    stats, outliers, typeMismatches, topValues, piiFlag
+    stats, outliers, typeMismatches, topValues, piiFlag, formatType, formatMismatches
   };
 }
 function toNumberSync(v) {
@@ -1065,11 +1321,14 @@ function buildIssuesListSync({ columns, duplicateIndices, blankRowIndices, total
     if (c.missingCount > 0) issues.push({ type: 'missing', severity: 'warn', title: `"${c.name}" has ${c.missingCount} missing values`, detail: 'Empty cells.', column: c.name, colType: c.type, rowIndices: c.missingRowIndices, canFix: true, fixAction: 'fill_missing' });
     if (c.typeMismatches.length > 0) issues.push({ type: 'mismatch', severity: 'bad', title: `"${c.name}" has ${c.typeMismatches.length} type mismatches`, detail: 'Text in numeric column.', column: c.name, rowIndices: c.typeMismatches.map(m => m.i), canFix: true, fixAction: 'drop_flagged' });
     if (c.outliers.length > 0) issues.push({ type: 'outlier', severity: 'warn', title: `"${c.name}" has ${c.outliers.length} outliers`, detail: 'Outside typical IQR range.', column: c.name, rowIndices: c.outliers.map(o => o.i), canFix: true, fixAction: 'remove_outliers' });
+    if (c.piiFlag) issues.push({ type: 'security', severity: 'bad', title: `"${c.name}" contains sensitive PII`, detail: `Detected ${c.piiFlag === 'credit_card' ? 'Credit Card numbers' : 'Social Security Numbers'}.`, column: c.name, rowIndices: [], canFix: true, fixAction: 'mask_pii' });
+    if (c.formatMismatches && c.formatMismatches.length > 0) issues.push({ type: 'format_mismatch', severity: 'bad', title: `"${c.name}" has ${c.formatMismatches.length} invalid ${c.formatType} formats`, detail: `Expected valid ${c.formatType} formatting.`, column: c.name, rowIndices: c.formatMismatches.map(m => m.i), canFix: true, fixAction: 'clear_invalid_formats' });
   });
   return issues;
 }
 
 function buildVerdictSync({ totalRows, totalCells, duplicateCount, blankCount, missingTotal, typeMismatchTotal }) {
+  if (totalRows === 0) return { score: 0, headline: 'Empty Dataset', sub: 'All records have been removed.', grade: 'N/A' };
   const penalty = (duplicateCount * 2.5) + (blankCount * 2) + (missingTotal * 0.4) + (typeMismatchTotal * 3);
   const score = Math.max(0, Math.min(100, Math.round(100 - (penalty / Math.max(1, totalCells)) * 100)));
   let grade = 'A+';
@@ -1144,13 +1403,24 @@ function renderExecutiveNarrative() {
   if (outlierCount > 0) points.push(`<strong>${outlierCount.toLocaleString()} statistical ${outlierCount === 1 ? 'outlier' : 'outliers'}</strong>`);
 
   let text = `Your dataset contains <strong>${a.totalRows.toLocaleString()} rows</strong> across <strong>${a.totalCols} columns</strong>. `;
-  if (points.length === 0) {
+  if (a.totalRows === 0) {
+    text += `The dataset is currently empty because all records have been removed. Please undo your recent actions or upload a new file.`;
+  } else if (points.length === 0) {
     text += `No data anomalies or missing cells were identified. All records are 100% complete, strongly typed, and ready for analytics or database ingestion.`;
   } else {
-    text += `We flagged ${points.join(', ')}. Overall data reliability is estimated at <strong>${a.verdict.score}%</strong>. Use the 1-click quick-fixes below or open the <strong>Clean & Export Studio</strong> to resolve these issues.`;
+    text += `We flagged ${points.join(', ')}. Overall data reliability is estimated at <strong>${a.verdict.score}%</strong>. <em style="font-size: 0.9em; opacity: 0.9;">(Note: Score penalizes missing or invalid data, but not statistical outliers)</em>. Use the 1-click quick-fixes below or open the <a href="#" id="inline-clean-studio-link" style="color: var(--primary); font-weight: 600; text-decoration: underline;">Clean & Export Studio</a> to resolve these issues.`;
   }
 
-  if (execNarrativeText) execNarrativeText.innerHTML = text;
+  if (execNarrativeText) {
+    execNarrativeText.innerHTML = text;
+    const inlineLink = document.getElementById('inline-clean-studio-link');
+    if (inlineLink) {
+      inlineLink.addEventListener('click', (e) => {
+        e.preventDefault();
+        openCleanModalBtn.click();
+      });
+    }
+  }
   if (execScanTime) execScanTime.textContent = `Audited locally in ${(performance.now() > 0 ? (performance.now() % 400 + 40).toFixed(0) : '60')}ms`;
 }
 
@@ -1349,6 +1619,8 @@ function renderIssuesList() {
         }
       } else if (issue.fixAction === 'mask_pii') {
         fixButtons = `<button class="btn-quick-fix" data-action="mask_pii" data-col="${escapeHtml(issue.column || '')}">Mask Data (****)</button>`;
+      } else if (issue.fixAction === 'clear_invalid_formats') {
+        fixButtons = `<button class="btn-quick-fix" data-action="clear_invalid_formats" data-col="${escapeHtml(issue.column || '')}">Clear ${rowList.length} Invalid Formats</button>`;
       } else if (issue.fixAction === 'drop_flagged') {
         fixButtons = `<button class="btn-quick-fix" data-action="drop_flagged" data-col="${escapeHtml(issue.column || '')}">Drop ${rowList.length} Mismatched Rows</button>`;
       }
@@ -1398,6 +1670,7 @@ function renderIssuesList() {
         else if (action === 'remove_outliers') fixRemoveOutliers(col);
         else if (action === 'fill_missing') fixFillMissing(col, strategy);
         else if (action === 'mask_pii') fixMaskPII(col);
+        else if (action === 'clear_invalid_formats') fixClearInvalidFormats(col);
         else if (action === 'drop_flagged') fixRemoveFlaggedRows();
       });
     });

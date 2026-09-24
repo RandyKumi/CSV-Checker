@@ -1018,6 +1018,7 @@ td.cell-bad-type { color: var(--coral); font-weight: 700; }
 [data-theme="dark"] .undo-snackbar {
   background: #252B28;
   border: 1px solid var(--line-strong);
+  color: var(--ink);
 }
 @keyframes slideUp {
   from { transform: translate(-50%, 20px); opacity: 0; }
