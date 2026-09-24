@@ -74,7 +74,11 @@
         <div class="upload-icon">↥</div>
         <h1>Drop a CSV or Excel file here</h1>
         <p class="muted">or <button class="link-btn" id="browse-btn" type="button">choose a file</button> from your device</p>
-        <p class="fine-print">100% private. Processing runs locally in your browser. No data is sent to any server.</p>
+        <p class="fine-print" style="margin-top: 15px;">
+          <button type="button" class="btn btn-sm btn-ghost" id="open-privacy-btn" style="color: #1DBB94; border-color: #1DBB94; border-radius: 20px; font-weight: bold;">
+            🛡️ 100% Private & Local Guarantee
+          </button>
+        </p>
       </div>
 
       <!-- Parsing Options -->
@@ -466,6 +470,30 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-primary" id="close-compare-footer-btn">Done</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- PRIVACY MODAL -->
+  <dialog id="privacy-modal" class="modal-dialog">
+    <div class="modal-content" style="max-width: 550px;">
+      <div class="modal-header">
+        <h3 style="color: #1DBB94;">🛡️ Privacy & Security Guarantee</h3>
+        <button type="button" class="close-modal-btn" id="close-privacy-btn" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body" style="line-height: 1.6;">
+        <p><strong>Your data is 100% secure because it never leaves your device.</strong></p>
+        <p>Unlike typical web applications that upload your CSV to a remote server for processing, Datacheck runs an advanced data engine directly inside your web browser.</p>
+        
+        <h4 style="margin-top: 20px;">How to prove it yourself:</h4>
+        <ol style="margin-left: 20px; margin-top: 10px;">
+          <li style="margin-bottom: 10px;"><strong>The Airplane Mode Test:</strong> Load this website, turn off your Wi-Fi, and upload a file. The app will work perfectly offline.</li>
+          <li style="margin-bottom: 10px;"><strong>The Network Test:</strong> Open your browser's Developer Tools (F12), click the Network tab, and upload a file. You will see that absolutely zero data is sent across the internet.</li>
+          <li style="margin-bottom: 10px;"><strong>Open Source:</strong> The code that runs this application is completely transparent and running right in your browser.</li>
+        </ol>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" id="close-privacy-footer-btn">Understood</button>
       </div>
     </div>
   </dialog>

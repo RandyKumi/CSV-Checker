@@ -115,6 +115,13 @@ const generateChartBtn = document.getElementById('generate-chart-btn');
 const mainVizCanvas = document.getElementById('main-viz-canvas');
 let mainVizChart = null;
 
+// Privacy Modal DOM
+const privacyModal = document.getElementById('privacy-modal');
+const openPrivacyBtn = document.getElementById('open-privacy-btn');
+const closePrivacyBtn = document.getElementById('close-privacy-btn');
+const closePrivacyFooterBtn = document.getElementById('close-privacy-footer-btn');
+
+
 // ==========================================
 // Theme Manager
 // ==========================================
@@ -789,6 +796,10 @@ copyAuditBtn.addEventListener('click', () => {
 
 undoBtn.addEventListener('click', undoAction);
 dismissUndoBtn.addEventListener('click', hideUndoBar);
+
+if (openPrivacyBtn) openPrivacyBtn.addEventListener('click', (e) => { e.stopPropagation(); privacyModal.showModal(); });
+if (closePrivacyBtn) closePrivacyBtn.addEventListener('click', () => privacyModal.close());
+if (closePrivacyFooterBtn) closePrivacyFooterBtn.addEventListener('click', () => privacyModal.close());
 
 window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
