@@ -440,8 +440,9 @@
   </div>
 
   <footer class="site-footer">
-    <div class="wrap">
-      <p class="muted">Datacheck — 100% Client-Side In-Browser Data Quality Engine. No telemetry, no server uploads.</p>
+    <div class="wrap" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+      <p class="muted" style="margin: 0;">Datacheck — 100% Client-Side In-Browser Data Quality Engine. No telemetry, no server uploads.</p>
+      <button class="link-btn" id="open-contact-btn" style="color: var(--muted); font-size: 14px; margin: 0;">Contact</button>
     </div>
   </footer>
 
@@ -494,6 +495,28 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-primary" id="close-privacy-footer-btn">Understood</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- CONTACT MODAL -->
+  <dialog id="contact-modal" class="modal-dialog">
+    <div class="modal-content" style="max-width: 500px;">
+      <div class="modal-header">
+        <h3 style="color: #1DBB94; text-transform: uppercase;">Contact Us</h3>
+        <button type="button" class="close-modal-btn" id="close-contact-btn" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body" style="line-height: 1.6;">
+        <p class="muted">For any inquiries, bug reports, feature requests, or business propositions, you can reach out to the Datacheck administration.</p>
+        
+        <h4 style="margin-top: 20px; font-weight: bold; font-size: 1.1em;">Email</h4>
+        <p style="color: #1DBB94; font-weight: 500; font-size: 1.05em; margin-top: 5px;">
+          <a href="mailto:randydankwa04@gmail.com" style="color: inherit; text-decoration: none;">randydankwa04@gmail.com</a>
+        </p>
+        
+        <p class="muted" style="margin-top: 30px; font-size: 0.9em; padding-top: 15px; border-top: 1px solid var(--border);">
+          Please note that because Datacheck is 100% local and private, we cannot assist with recovering lost data if you accidentally close your browser tab before exporting, nor can we recover corrupted source files.
+        </p>
       </div>
     </div>
   </dialog>

@@ -121,6 +121,11 @@ const openPrivacyBtn = document.getElementById('open-privacy-btn');
 const closePrivacyBtn = document.getElementById('close-privacy-btn');
 const closePrivacyFooterBtn = document.getElementById('close-privacy-footer-btn');
 
+// Contact Modal DOM
+const contactModal = document.getElementById('contact-modal');
+const openContactBtn = document.getElementById('open-contact-btn');
+const closeContactBtn = document.getElementById('close-contact-btn');
+
 
 // ==========================================
 // Theme Manager
@@ -800,6 +805,9 @@ dismissUndoBtn.addEventListener('click', hideUndoBar);
 if (openPrivacyBtn) openPrivacyBtn.addEventListener('click', (e) => { e.stopPropagation(); privacyModal.showModal(); });
 if (closePrivacyBtn) closePrivacyBtn.addEventListener('click', () => privacyModal.close());
 if (closePrivacyFooterBtn) closePrivacyFooterBtn.addEventListener('click', () => privacyModal.close());
+
+if (openContactBtn) openContactBtn.addEventListener('click', (e) => { e.stopPropagation(); contactModal.showModal(); });
+if (closeContactBtn) closeContactBtn.addEventListener('click', () => contactModal.close());
 
 window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
